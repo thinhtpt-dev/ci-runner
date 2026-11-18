@@ -103,9 +103,6 @@ jobs:
       build-sha: ${{ needs.plan.outputs.build-sha }}
       context-prefix: ${{ needs.plan.outputs.ctx }}
       ipa-path: dist/ios/Paperlight-sideload.ipa
-      # macos-26 jobs queue for a long time; macos-15 ships Xcode 26.3, enough for Expo SDK 58
-      runner: macos-15
-      xcode-version: '26.3'
       publish: ${{ needs.plan.outputs.publish == 'true' }}
 
   report:
