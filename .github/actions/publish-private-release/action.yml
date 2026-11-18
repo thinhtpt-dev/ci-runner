@@ -33,3 +33,14 @@ runs:
         else
           gh release create "$TAG" "$FILE" --title "$TITLE" --prerelease --target "$SHA" --notes "$NOTES"
         fi
+        # Show where to download, right on the run page (private repo: sign in to GitHub to open it).
+        NAME=$(basename "$FILE")
+        {
+          echo "### Build published to the private repo"
+          echo ""
+          echo "- Release page: https://github.com/$GH_REPO/releases/tag/$TAG"
+          echo "- Direct download: https://github.com/$GH_REPO/releases/download/$TAG/$NAME"
+          echo ""
+          echo "Open the links while signed in to GitHub. Commit: \`${SHA:0:7}\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+        echo "::notice title=Build ready::https://github.com/$GH_REPO/releases/tag/$TAG"
