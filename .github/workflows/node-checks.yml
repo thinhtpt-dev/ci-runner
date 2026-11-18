@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
       commands: { type: string, required: true, description: 'Shell commands run after npm ci' }
       context: { type: string, default: checks }
     secrets:
@@ -26,13 +27,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.build-sha || inputs.sha }}
           token: ${{ secrets.CI_RUNNER_PAT }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm ci
       - name: Run checks
         env:

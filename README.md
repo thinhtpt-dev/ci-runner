@@ -13,8 +13,10 @@ Flow: push/PR in a private repo -> `dispatch-ci.yml` (ubuntu, ~10s) fires `repos
 - `templates/*-dispatch-ci.yml` - copy into the private repo as `.github/workflows/dispatch-ci.yml`.
 
 ## Setup
-1. Fine-grained PAT `CI_RUNNER_PAT`: Contents rw, Commit statuses rw, Metadata r on each private repo; Contents rw on `ci-runner`.
-2. Add it as a secret named `CI_RUNNER_PAT` on `ci-runner` and on each private repo.
+1. Two fine-grained PATs (least privilege):
+   - `CI_RUNNER_PAT` (stored only on `ci-runner`): Contents rw, Commit statuses rw, Metadata r on each private repo.
+   - `CI_DISPATCH_PAT` (stored on each private repo): Contents rw on `ci-runner` only (needed for `repository_dispatch`).
+2. Repo settings on `ci-runner`: Actions -> General -> require approval for all outside collaborators; disable fork PR workflows.
 3. Add `EXPO_PUBLIC_REVENUECAT_TEST_KEY` to `ci-runner` (i-am-not-busy e2e).
 
 ## Manual run

@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
 
     secrets:
       CI_RUNNER_PAT: { required: true }
@@ -29,20 +30,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.build-sha || inputs.sha }}
           token: ${{ secrets.CI_RUNNER_PAT }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
       - run: npm ci
       - run: npx expo prebuild --platform android --no-install
+      - name: Compile debug build
+        run: ./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=x86_64
+        working-directory: android
       - if: always()
         uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
         with:

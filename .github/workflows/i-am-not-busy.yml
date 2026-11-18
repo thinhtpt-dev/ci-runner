@@ -11,7 +11,7 @@ on:
       jobs: { description: 'all | comma list of: checks, native-compile, e2e-android, android-build, ios-screentime, ios-sideload', default: checks }
 
 concurrency:
-  group: i-am-not-busy-${{ github.event.client_payload.ref || inputs.ref }}
+  group: i-am-not-busy-${{ github.event.client_payload.ref || format('refs/heads/{0}', inputs.ref) }}
   cancel-in-progress: ${{ (github.event.client_payload.ref || format('refs/heads/{0}', inputs.ref)) != 'refs/heads/main' }}
 
 permissions:
@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.p.outputs.sha }}
+      build-sha: ${{ steps.p.outputs.build-sha }}
       checks: ${{ steps.p.outputs.checks }}
       native: ${{ steps.p.outputs.native }}
       e2e: ${{ steps.p.outputs.e2e }}
@@ -39,6 +40,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
           PAYLOAD_REF: ${{ github.event.client_payload.ref }}
+          PAYLOAD_BUILD_SHA: ${{ github.event.client_payload.build_sha }}
           PAYLOAD_EVENT: ${{ github.event.client_payload.event }}
           INPUT_REF: ${{ inputs.ref }}
           INPUT_JOBS: ${{ inputs.jobs }}
@@ -47,13 +49,19 @@ jobs:
           set -euo pipefail
           if [ "$EVENT" = workflow_dispatch ]; then
             ref="refs/heads/$INPUT_REF"; origin=manual; jobs="$INPUT_JOBS"
-            sha=$(gh api "repos/$REPO/commits/$INPUT_REF" -q .sha)
+            sha=$(gh api "repos/$REPO/commits/$INPUT_REF" -q .sha); build_sha="$sha"
+            jobs="${jobs// /}"
           else
-            ref="$PAYLOAD_REF"; sha="$PAYLOAD_SHA"; origin="$PAYLOAD_EVENT"; jobs=""
+            ref="$PAYLOAD_REF"; sha="$PAYLOAD_SHA"; build_sha="${PAYLOAD_BUILD_SHA:-$PAYLOAD_SHA}"; origin="$PAYLOAD_EVENT"; jobs=""
           fi
+          [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad build sha"; exit 1; }
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha: $sha"; exit 1; }
           main=false
-          if [ "$ref" = refs/heads/main ] && [ "$origin" != pull_request ]; then main=true; fi
+          if [ "$ref" = refs/heads/main ] && [ "$origin" != pull_request ]; then
+            # Publish only commits that really are on main (guards against a mislabelled dispatch).
+            st=$(gh api "repos/$REPO/compare/$sha...main" -q .status || true)
+            if [ "$st" = identical ] || [ "$st" = ahead ]; then main=true; fi
+          fi
           # Dispatch events mirror the original triggers: checks always; Android compile on piece/*;
           # e2e on feat/* and PRs; release APK on PRs and main; iOS builds on main pushes.
           if [ -z "$jobs" ]; then
@@ -65,6 +73,7 @@ jobs:
           fi
           has() { [ "$jobs" = all ] || [[ ",$jobs," == *",$1,"* ]]; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "build-sha=$build_sha" >> "$GITHUB_OUTPUT"
           echo "checks=$(has checks && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "native=$(has native-compile && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "e2e=$(has e2e-android && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -81,6 +90,7 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
       commands: |
         npx tsc --noEmit
         npx expo lint
@@ -94,6 +104,7 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
 
   e2e-android:
     needs: plan
@@ -103,6 +114,7 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
 
   android-build:
     needs: plan
@@ -112,6 +124,7 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
       apk-name: IAmNotBusy.apk
       publish: ${{ needs.plan.outputs.publish == 'true' }}
 
@@ -123,6 +136,7 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
       scheme-workspace: ios/IAmNotBusy.xcworkspace
       scheme: IAmNotBusy
       ios-mode: screentime
@@ -135,5 +149,29 @@ jobs:
     with:
       repository: thinhtpt-dev/i-am-not-busy
       sha: ${{ needs.plan.outputs.sha }}
+      build-sha: ${{ needs.plan.outputs.build-sha }}
       ipa-path: dist/ios/IAmNotBusy-sideload.ipa
       publish: ${{ needs.plan.outputs.publish == 'true' }}
+
+  report:
+    needs: [plan, checks, native-compile, e2e-android, android-build, ios-screentime, ios-sideload]
+    if: always() && needs.plan.outputs.sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: s
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          case " $RESULTS " in
+            *" failure "*) echo "state=failure" >> "$GITHUB_OUTPUT" ;;
+            *" cancelled "*) echo "state=cancelled" >> "$GITHUB_OUTPUT" ;;
+            *) echo "state=success" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: thinhtpt-dev/i-am-not-busy
+          sha: ${{ needs.plan.outputs.sha }}
+          context: ci-runner/overall
+          state: ${{ steps.s.outputs.state }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

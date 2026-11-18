@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
 
     secrets:
       CI_RUNNER_PAT: { required: true }
@@ -16,7 +17,6 @@ jobs:
     timeout-minutes: 75
     env:
       IANB_E2E: '1'
-      EXPO_PUBLIC_REVENUECAT_TEST_KEY: ${{ secrets.EXPO_PUBLIC_REVENUECAT_TEST_KEY }}
     steps:
       - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
         with:
@@ -32,18 +32,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.build-sha || inputs.sha }}
           token: ${{ secrets.CI_RUNNER_PAT }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
       - run: npm ci
       - run: npx expo prebuild --platform android --no-install
       - name: Native unit tests (guard decision logic)
@@ -53,6 +54,8 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=x86_64
         working-directory: android
       - name: Start Metro (the debug APK loads JS from it)
+        env:
+          EXPO_PUBLIC_REVENUECAT_TEST_KEY: ${{ secrets.EXPO_PUBLIC_REVENUECAT_TEST_KEY }}
         run: |
           nohup npx expo start --port 8081 > metro.log 2>&1 &
           npx --yes wait-on@8.0.3 -t 120000 http://localhost:8081/status
