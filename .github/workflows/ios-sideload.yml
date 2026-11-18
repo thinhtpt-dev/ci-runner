@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 60
     env:
       IANB_IOS_MODE: ${{ inputs.ios-mode }}
+      IANB_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
         with:
