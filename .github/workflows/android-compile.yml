@@ -1,0 +1,53 @@
+name: android-compile
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/native-compile
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - name: Free runner disk (RN C++ builds are large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npx expo prebuild --platform android --no-install
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/native-compile
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

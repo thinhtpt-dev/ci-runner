@@ -1,0 +1,60 @@
+name: ios-simulator
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+      scheme-workspace: { type: string, required: true, description: 'e.g. ios/IAmNotBusy.xcworkspace' }
+      scheme: { type: string, required: true }
+      ios-mode: { type: string, default: '' }
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+
+permissions:
+  contents: read
+jobs:
+  simulator:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      IANB_IOS_MODE: ${{ inputs.ios-mode }}
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/ios-simulator
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: npm ci
+      - run: npx expo prebuild --platform ios
+      - name: Build for simulator (no signing)
+        env:
+          WORKSPACE: ${{ inputs.scheme-workspace }}
+          SCHEME: ${{ inputs.scheme }}
+        run: |
+          set -o pipefail
+          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -200
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/ios-simulator
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

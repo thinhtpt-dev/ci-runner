@@ -1,0 +1,82 @@
+name: android-build
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+      publish: { type: boolean, default: false, description: 'Replace the APK on the private android-latest release' }
+      apk-name: { type: string, required: true }
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+
+permissions:
+  contents: read
+jobs:
+  release-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/android-build
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - name: Free runner disk (RN C++ builds are large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npx expo prebuild --platform android --no-install
+      - name: Build release APK (phone ABIs)
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+        working-directory: android
+      - name: Verify the APK is signed and carries the JS bundle
+        env:
+          APK_NAME: ${{ inputs.apk-name }}
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs "$APK" > apksigner.txt 2>&1 || { cat apksigner.txt; exit 1; }
+          grep -m1 'certificate DN' apksigner.txt || { cat apksigner.txt; exit 1; }
+          unzip -l "$APK" > apk-contents.txt
+          grep -q 'assets/index.android.bundle' apk-contents.txt || { echo 'JS bundle missing from the APK'; exit 1; }
+          mkdir -p dist/android
+          cp "$APK" "dist/android/$APK_NAME"
+          ls -lh dist/android
+      - name: Publish APK to the private repo release
+        if: inputs.publish
+        uses: thinhtpt-dev/ci-runner/.github/actions/publish-private-release@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          tag: android-latest
+          title: Android build (latest main)
+          file: dist/android/${{ inputs.apk-name }}
+          notes: Standalone Android APK built by the public ci-runner from the latest main. On the phone, allow installing unknown apps, then open the file.
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/android-build
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

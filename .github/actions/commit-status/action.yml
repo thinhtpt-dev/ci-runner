@@ -1,0 +1,28 @@
+name: commit-status
+description: Report a commit status on a (private) repository SHA from this public runner.
+inputs:
+  repository: { description: 'owner/repo that owns the commit', required: true }
+  sha: { description: 'Commit SHA', required: true }
+  context: { description: 'Status context, e.g. ci-runner/checks', required: true }
+  state: { description: 'pending | success | failure | cancelled (job.status values accepted)', required: true }
+  token: { description: 'PAT with commit-status write on the repository', required: true }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repository }}
+        SHA: ${{ inputs.sha }}
+        CONTEXT: ${{ inputs.context }}
+        STATE: ${{ inputs.state }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        case "$STATE" in
+          success) s=success; d="Passed" ;;
+          failure) s=failure; d="Failed" ;;
+          cancelled) s=error; d="Cancelled" ;;
+          *) s=pending; d="Running" ;;
+        esac
+        gh api -X POST "repos/$REPO/statuses/$SHA" \
+          -f state="$s" -f context="$CONTEXT" -f description="$d" -f target_url="$RUN_URL" >/dev/null

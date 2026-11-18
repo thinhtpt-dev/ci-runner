@@ -1,0 +1,139 @@
+# Runs i-am-not-busy (private) jobs on free public-repo minutes.
+# Triggered by the dispatcher in the private repo (see templates/dispatch-ci.yml) or manually.
+name: i-am-not-busy
+
+on:
+  repository_dispatch:
+    types: [i-am-not-busy]
+  workflow_dispatch:
+    inputs:
+      ref: { description: 'Branch to run', default: main }
+      jobs: { description: 'all | comma list of: checks, native-compile, e2e-android, android-build, ios-screentime, ios-sideload', default: checks }
+
+concurrency:
+  group: i-am-not-busy-${{ github.event.client_payload.ref || inputs.ref }}
+  cancel-in-progress: ${{ (github.event.client_payload.ref || format('refs/heads/{0}', inputs.ref)) != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  REPO: thinhtpt-dev/i-am-not-busy
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      checks: ${{ steps.p.outputs.checks }}
+      native: ${{ steps.p.outputs.native }}
+      e2e: ${{ steps.p.outputs.e2e }}
+      apk: ${{ steps.p.outputs.apk }}
+      ios-screentime: ${{ steps.p.outputs.ios-screentime }}
+      ios-sideload: ${{ steps.p.outputs.ios-sideload }}
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - id: p
+        env:
+          EVENT: ${{ github.event_name }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+          PAYLOAD_REF: ${{ github.event.client_payload.ref }}
+          PAYLOAD_EVENT: ${{ github.event.client_payload.event }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_JOBS: ${{ inputs.jobs }}
+          GH_TOKEN: ${{ secrets.CI_RUNNER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            ref="refs/heads/$INPUT_REF"; origin=manual; jobs="$INPUT_JOBS"
+            sha=$(gh api "repos/$REPO/commits/$INPUT_REF" -q .sha)
+          else
+            ref="$PAYLOAD_REF"; sha="$PAYLOAD_SHA"; origin="$PAYLOAD_EVENT"; jobs=""
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha: $sha"; exit 1; }
+          main=false
+          if [ "$ref" = refs/heads/main ] && [ "$origin" != pull_request ]; then main=true; fi
+          # Dispatch events mirror the original triggers: checks always; Android compile on piece/*;
+          # e2e on feat/* and PRs; release APK on PRs and main; iOS builds on main pushes.
+          if [ -z "$jobs" ]; then
+            jobs="checks"
+            [[ "$ref" == refs/heads/piece/* ]] && jobs="$jobs,native-compile"
+            { [[ "$ref" == refs/heads/feat/* ]] || [ "$origin" = pull_request ]; } && jobs="$jobs,e2e-android"
+            { [ "$origin" = pull_request ] || [ "$main" = true ]; } && jobs="$jobs,android-build"
+            [ "$main" = true ] && jobs="$jobs,ios-screentime,ios-sideload"
+          fi
+          has() { [ "$jobs" = all ] || [[ ",$jobs," == *",$1,"* ]]; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "checks=$(has checks && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "native=$(has native-compile && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "e2e=$(has e2e-android && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "apk=$(has android-build && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ios-screentime=$(has ios-screentime && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ios-sideload=$(has ios-sideload && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "publish=$main" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
+    uses: ./.github/workflows/node-checks.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+      commands: |
+        npx tsc --noEmit
+        npx expo lint
+        npx jest --ci
+
+  native-compile:
+    needs: plan
+    if: needs.plan.outputs.native == 'true'
+    uses: ./.github/workflows/android-compile.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+
+  e2e-android:
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    uses: ./.github/workflows/android-e2e.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+
+  android-build:
+    needs: plan
+    if: needs.plan.outputs.apk == 'true'
+    uses: ./.github/workflows/android-build.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+      apk-name: IAmNotBusy.apk
+      publish: ${{ needs.plan.outputs.publish == 'true' }}
+
+  ios-screentime:
+    needs: plan
+    if: needs.plan.outputs.ios-screentime == 'true'
+    uses: ./.github/workflows/ios-simulator.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+      scheme-workspace: ios/IAmNotBusy.xcworkspace
+      scheme: IAmNotBusy
+      ios-mode: screentime
+
+  ios-sideload:
+    needs: plan
+    if: needs.plan.outputs.ios-sideload == 'true'
+    uses: ./.github/workflows/ios-sideload.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/i-am-not-busy
+      sha: ${{ needs.plan.outputs.sha }}
+      ipa-path: dist/ios/IAmNotBusy-sideload.ipa
+      publish: ${{ needs.plan.outputs.publish == 'true' }}

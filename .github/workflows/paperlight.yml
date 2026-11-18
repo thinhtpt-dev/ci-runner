@@ -1,0 +1,85 @@
+# Runs paperlight (private) jobs on free public-repo minutes.
+# Triggered by the dispatcher in the private repo (see templates/dispatch-ci.yml) or manually.
+name: paperlight
+
+on:
+  repository_dispatch:
+    types: [paperlight]
+  workflow_dispatch:
+    inputs:
+      ref: { description: 'Branch to run', default: main }
+      jobs: { description: 'all | comma list of: checks, ios-sideload', default: checks }
+
+concurrency:
+  group: paperlight-${{ github.event.client_payload.ref || inputs.ref }}
+  cancel-in-progress: ${{ (github.event.client_payload.ref || format('refs/heads/{0}', inputs.ref)) != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  REPO: thinhtpt-dev/paperlight
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      checks: ${{ steps.p.outputs.checks }}
+      ios: ${{ steps.p.outputs.ios }}
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - id: p
+        env:
+          EVENT: ${{ github.event_name }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+          PAYLOAD_REF: ${{ github.event.client_payload.ref }}
+          PAYLOAD_EVENT: ${{ github.event.client_payload.event }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_JOBS: ${{ inputs.jobs }}
+          GH_TOKEN: ${{ secrets.CI_RUNNER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            ref="refs/heads/$INPUT_REF"; origin=manual; jobs="$INPUT_JOBS"
+            sha=$(gh api "repos/$REPO/commits/$INPUT_REF" -q .sha)
+          else
+            ref="$PAYLOAD_REF"; sha="$PAYLOAD_SHA"; origin="$PAYLOAD_EVENT"; jobs=""
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha: $sha"; exit 1; }
+          main=false
+          if [ "$ref" = refs/heads/main ] && [ "$origin" != pull_request ]; then main=true; fi
+          # Dispatch events: checks always, iOS IPA on pushes to main (as in the original workflows).
+          if [ -z "$jobs" ]; then jobs="checks"; [ "$main" = true ] && jobs="checks,ios-sideload"; fi
+          has() { [ "$jobs" = all ] || [[ ",$jobs," == *",$1,"* ]]; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "checks=$(has checks && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ios=$(has ios-sideload && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "publish=$main" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
+    uses: ./.github/workflows/node-checks.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/paperlight
+      sha: ${{ needs.plan.outputs.sha }}
+      commands: |
+        npm run lint
+        npm run typecheck
+        npm test -- --ci
+        npm run test:engine
+        npm run build:engine && git diff --exit-code src/engine/generated
+
+  ios-sideload:
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
+    uses: ./.github/workflows/ios-sideload.yml
+    secrets: inherit
+    with:
+      repository: thinhtpt-dev/paperlight
+      sha: ${{ needs.plan.outputs.sha }}
+      ipa-path: dist/ios/Paperlight-sideload.ipa
+      publish: ${{ needs.plan.outputs.publish == 'true' }}

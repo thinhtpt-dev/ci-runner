@@ -1,0 +1,48 @@
+name: node-checks
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+      commands: { type: string, required: true, description: 'Shell commands run after npm ci' }
+      context: { type: string, default: checks }
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/${{ inputs.context }}
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run checks
+        env:
+          COMMANDS: ${{ inputs.commands }}
+        run: bash -eo pipefail -c "$COMMANDS"
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/${{ inputs.context }}
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

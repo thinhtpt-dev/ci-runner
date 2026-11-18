@@ -1,0 +1,82 @@
+name: android-e2e
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+      EXPO_PUBLIC_REVENUECAT_TEST_KEY: { required: false }
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      IANB_E2E: '1'
+      EXPO_PUBLIC_REVENUECAT_TEST_KEY: ${{ secrets.EXPO_PUBLIC_REVENUECAT_TEST_KEY }}
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/e2e-android
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - name: Free runner disk (RN C++ builds are large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npx expo prebuild --platform android --no-install
+      - name: Native unit tests (guard decision logic)
+        run: ./gradlew :distraction-guard:testDebugUnitTest --no-daemon -PreactNativeArchitectures=x86_64
+        working-directory: android
+      - name: Build E2E debug APK
+        run: ./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=x86_64
+        working-directory: android
+      - name: Start Metro (the debug APK loads JS from it)
+        run: |
+          nohup npx expo start --port 8081 > metro.log 2>&1 &
+          npx --yes wait-on@8.0.3 -t 120000 http://localhost:8081/status
+          curl -sf -o /dev/null "http://localhost:8081/node_modules/expo-router/entry.bundle?platform=android&dev=true&minify=false" || true
+      - name: Install Maestro
+        run: curl -fsSL "https://get.maestro.mobile.dev" | bash
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Run E2E on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ./scripts/e2e-android-run.sh android/app/build/outputs/apk/debug/app-debug.apk e2e-artifacts
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/e2e-android
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

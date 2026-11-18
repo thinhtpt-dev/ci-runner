@@ -1,0 +1,35 @@
+name: publish-private-release
+description: Upload a build artifact to a rolling release on the PRIVATE repo, never on this public repo.
+inputs:
+  repository: { description: 'Private owner/repo that receives the release', required: true }
+  sha: { description: 'Commit SHA the release targets', required: true }
+  tag: { description: 'Rolling release tag', required: true }
+  title: { description: 'Release title', required: true }
+  file: { description: 'Path of the file to upload', required: true }
+  notes: { description: 'Release notes', required: true }
+  recreate: { description: 'Delete and recreate the release (true) or replace the asset in place (false)', default: 'false' }
+  token: { description: 'PAT with contents write on the private repository', required: true }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ inputs.repository }}
+        SHA: ${{ inputs.sha }}
+        TAG: ${{ inputs.tag }}
+        TITLE: ${{ inputs.title }}
+        FILE: ${{ inputs.file }}
+        NOTES: ${{ inputs.notes }}
+        RECREATE: ${{ inputs.recreate }}
+      run: |
+        set -euo pipefail
+        if [ "$RECREATE" = "true" ]; then
+          gh release delete "$TAG" --yes --cleanup-tag || true
+        fi
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release upload "$TAG" "$FILE" --clobber
+          gh release edit "$TAG" --notes "$NOTES"
+        else
+          gh release create "$TAG" "$FILE" --title "$TITLE" --prerelease --target "$SHA" --notes "$NOTES"
+        fi

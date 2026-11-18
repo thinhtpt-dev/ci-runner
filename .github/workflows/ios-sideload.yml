@@ -1,0 +1,68 @@
+name: ios-sideload
+on:
+  workflow_call:
+    inputs:
+      repository: { type: string, required: true }
+      sha: { type: string, required: true }
+      publish: { type: boolean, default: false, description: 'Replace the IPA on the private sideload-latest release' }
+      ipa-path: { type: string, required: true }
+      ios-mode: { type: string, default: '' }
+    secrets:
+      CI_RUNNER_PAT: { required: true }
+
+permissions:
+  contents: read
+jobs:
+  sideload-ipa:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      IANB_IOS_MODE: ${{ inputs.ios-mode }}
+    steps:
+      - uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/ios-sideload
+          state: pending
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.sha }}
+          token: ${{ secrets.CI_RUNNER_PAT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: npm ci
+      - name: Build unsigned sideload IPA
+        run: |
+          set -o pipefail
+          ./scripts/build-ios-sideload-ipa.sh | tail -200
+      - name: Check the IPA exists
+        run: ls -lh "${{ inputs.ipa-path }}"
+      - name: Publish IPA to the private repo release
+        if: inputs.publish
+        uses: thinhtpt-dev/ci-runner/.github/actions/publish-private-release@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          tag: sideload-latest
+          title: Sideload build (latest main)
+          file: ${{ inputs.ipa-path }}
+          recreate: 'true'
+          notes: Unsigned iOS build by the public ci-runner. Install with Sideloadly or AltStore using a free Apple ID (expires after 7 days).
+          token: ${{ secrets.CI_RUNNER_PAT }}
+      - if: always()
+        uses: thinhtpt-dev/ci-runner/.github/actions/commit-status@main
+        with:
+          repository: ${{ inputs.repository }}
+          sha: ${{ inputs.sha }}
+          context: ci-runner/ios-sideload
+          state: ${{ job.status }}
+          token: ${{ secrets.CI_RUNNER_PAT }}

@@ -1,0 +1,29 @@
+# Fires the public ci-runner repo, which runs the real jobs on free minutes and reports
+# statuses back to this commit. Needs the CI_RUNNER_PAT secret on this repository.
+name: dispatch-ci
+
+on:
+  push:
+    branches: [main, 'feat/**', 'piece/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Dispatch to ci-runner
+        env:
+          GH_TOKEN: ${{ secrets.CI_RUNNER_PAT }}
+          EVENT: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then sha="$PR_SHA"; ref="refs/pull/$PR_NUMBER"; else sha="$PUSH_SHA"; ref="$PUSH_REF"; fi
+          gh api repos/thinhtpt-dev/ci-runner/dispatches \
+            -f event_type=i-am-not-busy \
+            -f "client_payload[sha]=$sha" -f "client_payload[ref]=$ref" -f "client_payload[event]=$EVENT"
