@@ -9,6 +9,8 @@ on:
       publish: { type: boolean, default: false, description: 'Replace the IPA on the private sideload-latest release' }
       ipa-path: { type: string, required: true }
       ios-mode: { type: string, default: '' }
+      runner: { type: string, default: macos-26, description: 'macOS runner image; macos-15 usually waits less in the queue' }
+      xcode-version: { type: string, default: latest-stable, description: 'Xcode on that image, for example 26.3' }
     secrets:
       CI_RUNNER_PAT: { required: true }
 
@@ -16,7 +18,7 @@ permissions:
   contents: read
 jobs:
   sideload-ipa:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     env:
       IANB_IOS_MODE: ${{ inputs.ios-mode }}
@@ -41,7 +43,7 @@ jobs:
           node-version: 22
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: ${{ inputs.xcode-version }}
       - run: npm ci
       - name: Build unsigned sideload IPA
         run: |
