@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      context-prefix: { type: string, default: '', description: "Status context prefix, 'pr/' for PR runs" }
       build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
       scheme-workspace: { type: string, required: true, description: 'e.g. ios/IAmNotBusy.xcworkspace' }
       scheme: { type: string, required: true }
@@ -24,7 +25,7 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/ios-simulator
+          context: ci-runner/${{ inputs.context-prefix }}ios-simulator
           state: pending
           token: ${{ secrets.CI_RUNNER_PAT }}
       - uses: actions/checkout@v4
@@ -55,6 +56,6 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/ios-simulator
+          context: ci-runner/${{ inputs.context-prefix }}ios-simulator
           state: ${{ job.status }}
           token: ${{ secrets.CI_RUNNER_PAT }}

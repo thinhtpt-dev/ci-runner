@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      context-prefix: { type: string, default: '', description: "Status context prefix, 'pr/' for PR runs" }
       build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
       commands: { type: string, required: true, description: 'Shell commands run after npm ci' }
       context: { type: string, default: checks }
@@ -21,7 +22,7 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/${{ inputs.context }}
+          context: ci-runner/${{ inputs.context-prefix }}${{ inputs.context }}
           state: pending
           token: ${{ secrets.CI_RUNNER_PAT }}
       - uses: actions/checkout@v4
@@ -43,6 +44,6 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/${{ inputs.context }}
+          context: ci-runner/${{ inputs.context-prefix }}${{ inputs.context }}
           state: ${{ job.status }}
           token: ${{ secrets.CI_RUNNER_PAT }}

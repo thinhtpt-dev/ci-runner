@@ -4,6 +4,7 @@ on:
     inputs:
       repository: { type: string, required: true }
       sha: { type: string, required: true }
+      context-prefix: { type: string, default: '', description: "Status context prefix, 'pr/' for PR runs" }
       build-sha: { type: string, default: '', description: 'Commit to build (PR merge commit); statuses go to sha' }
       publish: { type: boolean, default: false, description: 'Replace the APK on the private android-latest release' }
       apk-name: { type: string, required: true }
@@ -21,7 +22,7 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/android-build
+          context: ci-runner/${{ inputs.context-prefix }}android-build
           state: pending
           token: ${{ secrets.CI_RUNNER_PAT }}
       - name: Free runner disk (RN C++ builds are large)
@@ -79,6 +80,6 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           sha: ${{ inputs.sha }}
-          context: ci-runner/android-build
+          context: ci-runner/${{ inputs.context-prefix }}android-build
           state: ${{ job.status }}
           token: ${{ secrets.CI_RUNNER_PAT }}

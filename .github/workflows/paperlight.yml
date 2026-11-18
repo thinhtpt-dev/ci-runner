@@ -1,5 +1,5 @@
 # Runs paperlight (private) jobs on free public-repo minutes.
-# Triggered by the dispatcher in the private repo (see templates/dispatch-ci.yml) or manually.
+# Triggered by the dispatcher in the private repo (see templates/paperlight-dispatch-ci.yml) or manually.
 name: paperlight
 
 on:
@@ -30,6 +30,7 @@ jobs:
       checks: ${{ steps.p.outputs.checks }}
       ios: ${{ steps.p.outputs.ios }}
       publish: ${{ steps.p.outputs.publish }}
+      ctx: ${{ steps.p.outputs.ctx }}
     steps:
       - id: p
         env:
@@ -52,20 +53,26 @@ jobs:
           fi
           [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad build sha"; exit 1; }
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha: $sha"; exit 1; }
-          main=false
+          main=false; publish=false
           if [ "$ref" = refs/heads/main ] && [ "$origin" != pull_request ]; then
+            main=true
             # Publish only commits that really are on main (guards against a mislabelled dispatch).
-            st=$(gh api "repos/$REPO/compare/$sha...main" -q .status || true)
-            if [ "$st" = identical ] || [ "$st" = ahead ]; then main=true; fi
+            st=$(gh api "repos/$REPO/compare/$sha...main" -q .status) || { echo "compare failed"; exit 1; }
+            case "$st" in identical|ahead) publish=true ;; esac
           fi
+          ctx=""; [ "$origin" = pull_request ] && ctx="pr/"
           # Dispatch events: checks always, iOS IPA on pushes to main (as in the original workflows).
           if [ -z "$jobs" ]; then jobs="checks"; [ "$main" = true ] && jobs="checks,ios-sideload"; fi
+          for j in ${jobs//,/ }; do
+            case " all checks ios-sideload " in *" $j "*) ;; *) echo "unknown job: $j"; exit 1 ;; esac
+          done
           has() { [ "$jobs" = all ] || [[ ",$jobs," == *",$1,"* ]]; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "build-sha=$build_sha" >> "$GITHUB_OUTPUT"
           echo "checks=$(has checks && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "ios=$(has ios-sideload && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "publish=$main" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "ctx=$ctx" >> "$GITHUB_OUTPUT"
 
   checks:
     needs: plan
@@ -76,6 +83,7 @@ jobs:
       repository: thinhtpt-dev/paperlight
       sha: ${{ needs.plan.outputs.sha }}
       build-sha: ${{ needs.plan.outputs.build-sha }}
+      context-prefix: ${{ needs.plan.outputs.ctx }}
       commands: |
         npm run lint
         npm run typecheck
@@ -93,6 +101,7 @@ jobs:
       repository: thinhtpt-dev/paperlight
       sha: ${{ needs.plan.outputs.sha }}
       build-sha: ${{ needs.plan.outputs.build-sha }}
+      context-prefix: ${{ needs.plan.outputs.ctx }}
       ipa-path: dist/ios/Paperlight-sideload.ipa
       publish: ${{ needs.plan.outputs.publish == 'true' }}
 
@@ -115,6 +124,6 @@ jobs:
         with:
           repository: thinhtpt-dev/paperlight
           sha: ${{ needs.plan.outputs.sha }}
-          context: ci-runner/overall
+          context: ci-runner/${{ needs.plan.outputs.ctx }}overall
           state: ${{ steps.s.outputs.state }}
           token: ${{ secrets.CI_RUNNER_PAT }}
